@@ -6,31 +6,60 @@ const DNAHelix = ({ sequence }) => {
 
   useEffect(() => {
     const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0xf5f5f5);
+
+    const width = 1000;
+    const height = 600;
 
     const camera = new THREE.PerspectiveCamera(
       75,
-      window.innerWidth / window.innerHeight,
+      width / height,
       0.1,
       1000
     );
 
-    const renderer = new THREE.WebGLRenderer();
-    renderer.setSize(window.innerWidth, window.innerHeight);
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(width, height);
 
-    // ✅ SAVE STABLE REF
     const mount = mountRef.current;
     if (!mount) return;
 
     mount.appendChild(renderer.domElement);
 
-    camera.position.z = 20;
+    const length = sequence.length;
 
-    // LIGHT
-    const light = new THREE.PointLight(0xffffff, 1);
-    light.position.set(10, 10, 10);
+    // 🔥 SMART SCALING (fills screen first, shrinks only when needed)
+    let heightStep;
+    if (length < 30) {
+      heightStep = 1.5;
+    } else if (length < 80) {
+      heightStep = 1.0;
+    } else {
+      heightStep = 60 / length;
+    }
+
+    let radius;
+    if (length < 30) {
+      radius = 6;
+    } else if (length < 80) {
+      radius = 5;
+    } else {
+      radius = 4;
+    }
+
+    // 📸 CAMERA (controlled scaling, not too aggressive)
+    camera.position.z = 50 + Math.min(length, 100) * 0.2;
+    camera.position.y = Math.min(length, 100) * 0.15;
+
+    // 💡 LIGHTING
+    const light = new THREE.PointLight(0xffffff, 3);
+    light.position.set(20, 20, 20);
     scene.add(light);
 
-    // COLORS
+    const ambient = new THREE.AmbientLight(0xffffff, 0.8);
+    scene.add(ambient);
+
+    // 🎨 COLORS
     const colors = {
       A: 0x00ff00,
       T: 0xff0000,
@@ -38,21 +67,21 @@ const DNAHelix = ({ sequence }) => {
       C: 0x0000ff,
     };
 
-    // HELIX SETTINGS
-    const radius = 5;
-    const heightStep = 1;
-    const angleStep = 0.5;
+    const angleStep = 0.6;
+
+    // 🔥 CENTERING
+    const offset = (length * heightStep) / 2;
 
     sequence.split("").forEach((base, i) => {
       const angle = i * angleStep;
 
       const x = radius * Math.cos(angle);
-      const y = i * heightStep;
+      const y = i * heightStep - offset;
       const z = radius * Math.sin(angle);
 
-      const geometry = new THREE.SphereGeometry(0.5, 16, 16);
+      const geometry = new THREE.SphereGeometry(1.2, 32, 32);
       const material = new THREE.MeshStandardMaterial({
-        color: colors[base] || 0xffffff,
+        color: colors[base] || 0x999999,
       });
 
       const sphere = new THREE.Mesh(geometry, material);
@@ -61,7 +90,7 @@ const DNAHelix = ({ sequence }) => {
       scene.add(sphere);
     });
 
-    // ANIMATE
+    // 🔁 ANIMATION
     const animate = () => {
       requestAnimationFrame(animate);
       scene.rotation.y += 0.01;
@@ -70,6 +99,7 @@ const DNAHelix = ({ sequence }) => {
 
     animate();
 
+    // 🧹 CLEANUP
     return () => {
       if (mount && renderer.domElement.parentNode === mount) {
         mount.removeChild(renderer.domElement);
@@ -77,7 +107,16 @@ const DNAHelix = ({ sequence }) => {
     };
   }, [sequence]);
 
-  return <div ref={mountRef}></div>;
+  return (
+    <div
+      ref={mountRef}
+      style={{
+        marginTop: "20px",
+        display: "flex",
+        justifyContent: "center",
+      }}
+    />
+  );
 };
 
 export default DNAHelix;
