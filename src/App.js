@@ -15,6 +15,9 @@ function App() {
   const [selectedOrfIdx, setSelectedOrfIdx] = useState(null);
   const [minOrfLength, setMinOrfLength] = useState(21); // nt
   const [highlightAllFrames, setHighlightAllFrames] = useState(false);
+  const [selectedEnzymes, setSelectedEnzymes] = useState(() => new Set(["EcoRI", "BamHI", "HindIII"]));
+  const [cutSites, setCutSites] = useState([]); // [{ enzyme, index, strand, color }]
+  const [fragments, setFragments] = useState([]); // [{ start, end, length }]
 
   // 🧬 BIO STATS
   const length = sequence.length;
@@ -29,6 +32,82 @@ function App() {
     G: (sequence.match(/G/g) || []).length,
     C: (sequence.match(/C/g) || []).length,
   };
+
+  // Restriction enzymes (simple exact sites, linear DNA)
+  const ENZYMES = React.useMemo(() => ([
+    { name: "EcoRI",  site: "GAATTC",  cutTop: 1, cutBottom: 5, color: 0x22c55e },
+    { name: "BamHI",  site: "GGATCC",  cutTop: 1, cutBottom: 5, color: 0x3b82f6 },
+    { name: "HindIII",site: "AAGCTT",  cutTop: 1, cutBottom: 5, color: 0xf59e0b },
+    { name: "XhoI",   site: "CTCGAG",  cutTop: 1, cutBottom: 5, color: 0xef4444 },
+    { name: "NotI",   site: "GCGGCCGC",cutTop: 2, cutBottom: 6, color: 0xa855f7 },
+  ]), []);
+
+  const complementOf = (b) => {
+    switch (b) {
+      case "A": return "T";
+      case "T": return "A";
+      case "G": return "C";
+      case "C": return "G";
+      default: return "N";
+    }
+  };
+  const reverseComplement = (s) => s.split("").reverse().map(complementOf).join("");
+
+  function findAllIndices(haystack, needle) {
+    const idxs = [];
+    let i = 0;
+    while (i <= haystack.length - needle.length) {
+      const j = haystack.indexOf(needle, i);
+      if (j === -1) break;
+      idxs.push(j);
+      i = j + 1;
+    }
+    return idxs;
+  }
+
+  // Compute enzyme cut positions whenever sequence or selection changes
+  React.useEffect(() => {
+    const s = sequence.toUpperCase().replace(/[^ATGC]/g, "");
+    const enabled = new Set(selectedEnzymes);
+    const cuts = [];
+    ENZYMES.forEach((e) => {
+      if (!enabled.has(e.name)) return;
+      // Forward matches
+      const idxsF = findAllIndices(s, e.site);
+      idxsF.forEach((start) => {
+        cuts.push({ enzyme: e.name, index: start + e.cutTop, strand: "top", color: e.color });
+        cuts.push({ enzyme: e.name, index: start + e.site.length - (e.site.length - e.cutBottom), strand: "bottom", color: e.color });
+      });
+      // Reverse complement matches (recognition site is palindromic for listed enzymes, but include for completeness)
+      const rc = reverseComplement(e.site);
+      if (rc !== e.site) {
+        const idxsR = findAllIndices(s, rc);
+        idxsR.forEach((start) => {
+          // Map RC site cut positions back to forward indexing.
+          // For RC match, the "top" cut relative to rc corresponds to bottom cut on the forward strand.
+          const topIndex = start + (rc.length - e.cutBottom);
+          const bottomIndex = start + (rc.length - e.cutTop);
+          cuts.push({ enzyme: e.name, index: topIndex, strand: "top", color: e.color });
+          cuts.push({ enzyme: e.name, index: bottomIndex, strand: "bottom", color: e.color });
+        });
+      }
+    });
+    // Clamp within sequence
+    const filtered = cuts.filter(c => c.index >= 0 && c.index <= s.length);
+    filtered.sort((a, b) => a.index - b.index || a.enzyme.localeCompare(b.enzyme));
+    setCutSites(filtered);
+
+    // Compute linear digest fragments (include 0 and length as boundaries)
+    const cutPositions = Array.from(new Set(filtered.map(c => c.index))).sort((a, b) => a - b);
+    const boundaries = [0, ...cutPositions, s.length];
+    const frags = [];
+    for (let i = 1; i < boundaries.length; i++) {
+      const start = boundaries[i - 1];
+      const end = boundaries[i];
+      frags.push({ start, end, length: end - start });
+    }
+    setFragments(frags);
+  }, [sequence, ENZYMES, JSON.stringify(Array.from(selectedEnzymes))]);
 
   // 🧠 Core recompute from base (user input) using a list of mutations in order
   const recomputeFromMutations = (list, base = null) => {
@@ -211,6 +290,7 @@ function App() {
                 color: o.frame === 0 ? 0x22c55e : o.frame === 1 ? 0x3b82f6 : 0xf59e0b,
                 selected: idx === selectedOrfIdx,
               }))}
+              cutSites={cutSites}
             />
           </div>
 
@@ -548,6 +628,74 @@ function App() {
                       >
                         Copy protein
                       </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+
+          {/* Restriction Enzymes */}
+          <section className="card">
+            <div className="card-header">
+              <h3>Restriction Enzymes</h3>
+            </div>
+            <div className="mutations-list" style={{ padding: 8 }}>
+              {ENZYMES.map((e) => {
+                const count = cutSites.filter(cs => cs.enzyme === e.name).length / 2; // pairs (top+bottom)
+                return (
+                  <label key={e.name} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                    <input
+                      type="checkbox"
+                      checked={selectedEnzymes.has(e.name)}
+                      onChange={(ev) => {
+                        setSelectedEnzymes(prev => {
+                          const next = new Set(prev);
+                          if (ev.target.checked) next.add(e.name);
+                          else next.delete(e.name);
+                          return next;
+                        });
+                      }}
+                    />
+                    <span className="pill" style={{ backgroundColor: "#0b1220", border: "1px solid #1f2a44" }}>{e.name}</span>
+                    <span className="mono">{e.site}</span>
+                    <span className="mono" style={{ color: "#94a3b8" }}>{count} site{count === 1 ? "" : "s"}</span>
+                  </label>
+                );
+              })}
+            </div>
+            {cutSites.length === 0 ? (
+              <div className="mutations-empty">No cut sites for selected enzymes</div>
+            ) : (
+              <ul className="mutations-list">
+                {cutSites.map((cs, i) => (
+                  <li key={`${cs.enzyme}-${cs.index}-${cs.strand}-${i}`} className="mutation-item">
+                    <div className="mut-content">
+                      <span className="pill">{cs.enzyme}</span>
+                      <span className="mono">pos {cs.index}</span>
+                      <span className="mono" style={{ color: "#94a3b8" }}>{cs.strand}</span>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+
+          {/* Virtual Digest (linear) */}
+          <section className="card">
+            <div className="card-header">
+              <h3>Virtual Digest</h3>
+            </div>
+            {fragments.length <= 1 ? (
+              <div className="mutations-empty">No fragments (no cuts)</div>
+            ) : (
+              <ul className="mutations-list">
+                {fragments.map((f, idx) => (
+                  <li key={`${f.start}-${f.end}-${idx}`} className="mutation-item">
+                    <div className="mut-content">
+                      <span className="pill">Fragment {idx + 1}</span>
+                      <span className="mono">[{f.start}–{f.end})</span>
+                      <span className="mono">{f.length} bp</span>
                     </div>
                   </li>
                 ))}

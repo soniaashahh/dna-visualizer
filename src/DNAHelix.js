@@ -2,7 +2,7 @@ import React, { useEffect, useRef } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls";
 
-const DNAHelix = ({ sequence, mutatedMarkers = [], orfSegments = [] }) => {
+const DNAHelix = ({ sequence, mutatedMarkers = [], orfSegments = [], cutSites = [] }) => {
   const mountRef = useRef(null);
 
   useEffect(() => {
@@ -191,11 +191,35 @@ const DNAHelix = ({ sequence, mutatedMarkers = [], orfSegments = [] }) => {
       scene.add(sleeve);
     });
 
+    // Restriction enzyme cut-site markers (pulsing rings)
+    const snipMeshes = [];
+    if (Array.isArray(cutSites)) {
+      cutSites.forEach((cs) => {
+        const y = (cs.index * heightStep) - offset;
+        const ringRadius = radius + 0.8;
+        const ringGeo = new THREE.TorusGeometry(ringRadius, 0.12, 12, 48);
+        const color = cs.color || 0xef4444;
+        const ringMat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9 });
+        const ring = new THREE.Mesh(ringGeo, ringMat);
+        ring.position.set(0, y, 0);
+        ring.rotation.x = Math.PI / 2;
+        scene.add(ring);
+        snipMeshes.push(ring);
+      });
+    }
+
     // 🔁 ANIMATION
     const animate = () => {
       requestAnimationFrame(animate);
       controls.update();
       scene.rotation.y += 0.01;
+      // Pulse cut-site markers
+      const t = performance.now() * 0.003;
+      snipMeshes.forEach((m, idx) => {
+        const s = 1 + 0.12 * Math.sin(t + idx);
+        m.scale.set(s, s, s);
+        m.material.opacity = 0.65 + 0.25 * (0.5 + 0.5 * Math.sin(t + idx));
+      });
       renderer.render(scene, camera);
     };
 
@@ -208,7 +232,7 @@ const DNAHelix = ({ sequence, mutatedMarkers = [], orfSegments = [] }) => {
       }
       controls.dispose();
     };
-  }, [sequence]);
+  }, [sequence, JSON.stringify(cutSites), JSON.stringify(orfSegments), JSON.stringify(mutatedMarkers)]);
 
   return (
     <div
