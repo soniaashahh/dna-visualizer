@@ -14,6 +14,7 @@ function App() {
   const [orfs, setOrfs] = useState([]);
   const [selectedOrfIdx, setSelectedOrfIdx] = useState(null);
   const [minOrfLength, setMinOrfLength] = useState(21); // nt
+  const [highlightAllFrames, setHighlightAllFrames] = useState(false);
 
   // 🧬 BIO STATS
   const length = sequence.length;
@@ -214,11 +215,24 @@ function App() {
           </div>
 
           <div className="sequence-preview">
-            <label>Sequence preview</label>
+            <label>
+              Sequence preview
+              <span style={{ marginLeft: 10, fontWeight: 400, color: "#94a3b8", fontSize: 12 }}>
+                <input
+                  type="checkbox"
+                  checked={highlightAllFrames}
+                  onChange={(e) => setHighlightAllFrames(e.target.checked)}
+                  style={{ marginRight: 6 }}
+                />
+                All frames
+              </span>
+            </label>
             <div className="sequence-chip">
               {(() => {
                 const s = sequence.toUpperCase();
                 const classes = new Array(s.length).fill("");
+                const hasStart = new Array(s.length).fill(false);
+                const hasStop = new Array(s.length).fill(false);
                 // Highlight selected ORF range if any
                 if (typeof selectedOrfIdx === "number" && selectedOrfIdx >= 0) {
                   const o = (function() {
@@ -233,13 +247,26 @@ function App() {
                   }
                 }
                 // Start/stop codons
+                // Limit highlights to a target frame to avoid mixed-frame artifacts like a lone 'A' from ATG followed by a stop in another frame.
+                const targetFrames = (() => {
+                  if (typeof selectedOrfIdx === "number" && selectedOrfIdx >= 0 && orfs[selectedOrfIdx]) {
+                    return new Set([orfs[selectedOrfIdx].frame]);
+                  }
+                  return highlightAllFrames ? new Set([0,1,2]) : new Set([0]);
+                })();
                 for (let i = 0; i + 2 < s.length; i++) {
+                  if (!targetFrames.has(i % 3)) continue;
                   const codon = s.slice(i, i + 3);
                   if (codon === "ATG") {
-                    for (let k = 0; k < 3; k++) classes[i + k] = (classes[i + k] + " seq-start").trim();
+                    for (let k = 0; k < 3; k++) hasStart[i + k] = true;
                   } else if (codon === "TAA" || codon === "TAG" || codon === "TGA") {
-                    for (let k = 0; k < 3; k++) classes[i + k] = (classes[i + k] + " seq-stop").trim();
+                    for (let k = 0; k < 3; k++) hasStop[i + k] = true;
                   }
+                }
+                // Priority: start over stop; then ORF
+                for (let i = 0; i < s.length; i++) {
+                  if (hasStart[i]) classes[i] = "seq-start";
+                  else if (hasStop[i]) classes[i] = "seq-stop";
                 }
                 return s.split("").map((ch, idx) => (
                   <span key={idx} className={`seq-token${classes[idx] ? " " + classes[idx] : ""}`}>{ch}</span>
