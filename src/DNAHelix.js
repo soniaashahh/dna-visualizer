@@ -2,7 +2,7 @@ import React, { useEffect, useRef } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls";
 
-const DNAHelix = ({ sequence, mutatedMarkers = [], orfSegments = [], cutSites = [] }) => {
+const DNAHelix = ({ sequence, mutatedMarkers = [], orfSegments = [], cutSites = [], showCutAnimation = true }) => {
   const mountRef = useRef(null);
 
   useEffect(() => {
@@ -205,6 +205,34 @@ const DNAHelix = ({ sequence, mutatedMarkers = [], orfSegments = [], cutSites = 
         ring.rotation.x = Math.PI / 2;
         scene.add(ring);
         snipMeshes.push(ring);
+
+        // Filled disc (brighter green) to make the cut very recognizable
+        const discGeo = new THREE.CircleGeometry(ringRadius * 0.92, 48);
+        const discMat = new THREE.MeshBasicMaterial({
+          color: 0x22ff88, // bright mint green
+          transparent: true,
+          opacity: 0.28,
+          side: THREE.DoubleSide,
+        });
+        const disc = new THREE.Mesh(discGeo, discMat);
+        disc.position.set(0, y, 0);
+        disc.rotation.x = Math.PI / 2;
+        scene.add(disc);
+        snipMeshes.push(disc);
+
+        // Soft glow sprite (subtle halo)
+        const spriteMat = new THREE.SpriteMaterial({
+          color: 0x86efac,
+          opacity: 0.25,
+          depthWrite: false,
+          blending: THREE.AdditiveBlending,
+        });
+        const glow = new THREE.Sprite(spriteMat);
+        glow.position.set(0, y, 0);
+        const glowSize = ringRadius * 1.9;
+        glow.scale.set(glowSize, glowSize, 1);
+        scene.add(glow);
+        snipMeshes.push(glow);
       });
     }
 
@@ -214,12 +242,19 @@ const DNAHelix = ({ sequence, mutatedMarkers = [], orfSegments = [], cutSites = 
       controls.update();
       scene.rotation.y += 0.01;
       // Pulse cut-site markers
-      const t = performance.now() * 0.003;
-      snipMeshes.forEach((m, idx) => {
-        const s = 1 + 0.12 * Math.sin(t + idx);
-        m.scale.set(s, s, s);
-        m.material.opacity = 0.65 + 0.25 * (0.5 + 0.5 * Math.sin(t + idx));
-      });
+      if (showCutAnimation) {
+        const t = performance.now() * 0.003;
+        snipMeshes.forEach((m, idx) => {
+          const s = 1 + 0.12 * Math.sin(t + idx);
+          m.scale.set(s, s, s);
+          m.material.opacity = 0.65 + 0.25 * (0.5 + 0.5 * Math.sin(t + idx));
+        });
+      } else {
+        snipMeshes.forEach((m) => {
+          m.scale.set(1, 1, 1);
+          m.material.opacity = 0.7;
+        });
+      }
       renderer.render(scene, camera);
     };
 
@@ -232,7 +267,7 @@ const DNAHelix = ({ sequence, mutatedMarkers = [], orfSegments = [], cutSites = 
       }
       controls.dispose();
     };
-  }, [sequence, JSON.stringify(cutSites), JSON.stringify(orfSegments), JSON.stringify(mutatedMarkers)]);
+  }, [sequence, JSON.stringify(cutSites), JSON.stringify(orfSegments), JSON.stringify(mutatedMarkers), showCutAnimation]);
 
   return (
     <div

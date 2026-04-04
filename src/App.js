@@ -18,6 +18,7 @@ function App() {
   const [selectedEnzymes, setSelectedEnzymes] = useState(() => new Set(["EcoRI", "BamHI", "HindIII"]));
   const [cutSites, setCutSites] = useState([]); // [{ enzyme, index, strand, color }]
   const [fragments, setFragments] = useState([]); // [{ start, end, length }]
+  const [showCutAnimation, setShowCutAnimation] = useState(true);
 
   // 🧬 BIO STATS
   const length = sequence.length;
@@ -291,6 +292,7 @@ function App() {
                 selected: idx === selectedOrfIdx,
               }))}
               cutSites={cutSites}
+              showCutAnimation={showCutAnimation}
             />
           </div>
 
@@ -635,50 +637,98 @@ function App() {
             )}
           </section>
 
-          {/* Restriction Enzymes */}
+          {/* Restriction Enzyme Mapper */}
           <section className="card">
             <div className="card-header">
-              <h3>Restriction Enzymes</h3>
+              <h3>Restriction Enzyme Mapper</h3>
             </div>
-            <div className="mutations-list" style={{ padding: 8 }}>
-              {ENZYMES.map((e) => {
-                const count = cutSites.filter(cs => cs.enzyme === e.name).length / 2; // pairs (top+bottom)
-                return (
-                  <label key={e.name} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-                    <input
-                      type="checkbox"
-                      checked={selectedEnzymes.has(e.name)}
-                      onChange={(ev) => {
-                        setSelectedEnzymes(prev => {
-                          const next = new Set(prev);
-                          if (ev.target.checked) next.add(e.name);
-                          else next.delete(e.name);
-                          return next;
-                        });
-                      }}
-                    />
-                    <span className="pill" style={{ backgroundColor: "#0b1220", border: "1px solid #1f2a44" }}>{e.name}</span>
-                    <span className="mono">{e.site}</span>
-                    <span className="mono" style={{ color: "#94a3b8" }}>{count} site{count === 1 ? "" : "s"}</span>
-                  </label>
-                );
-              })}
+            <div style={{ padding: 12 }}>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
+                {ENZYMES.map((e) => {
+                  const countPairs = Math.floor(cutSites.filter(cs => cs.enzyme === e.name).length / 2);
+                  return (
+                    <label key={e.name} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 10px", border: "1px solid #1f2a44", borderRadius: 999, background: selectedEnzymes.has(e.name) ? "#0f172a" : "#0b1220", cursor: "pointer" }}>
+                      <input
+                        type="checkbox"
+                        checked={selectedEnzymes.has(e.name)}
+                        onChange={(ev) => {
+                          setSelectedEnzymes(prev => {
+                            const next = new Set(prev);
+                            if (ev.target.checked) next.add(e.name);
+                            else next.delete(e.name);
+                            return next;
+                          });
+                        }}
+                      />
+                      <span className="mono" style={{ color: "#cbd5e1" }}>{e.name}</span>
+                      <span className="mono" style={{ color: "#64748b" }}>{countPairs}</span>
+                    </label>
+                  );
+                })}
+              </div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <span className="mono" style={{ color: "#cbd5e1" }}>Show Cut Animation</span>
+                  <input type="checkbox" checked={showCutAnimation} onChange={(e) => setShowCutAnimation(e.target.checked)} />
+                </label>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    className="btn"
+                    onClick={() => setSelectedEnzymes(new Set(ENZYMES.map(e => e.name)))}
+                  >
+                    Cut All
+                  </button>
+                  <button
+                    className="btn"
+                    onClick={() => {
+                      // Clear all selected enzymes and derived visuals
+                      setSelectedEnzymes(new Set());
+                      setCutSites([]);
+                      setFragments([]);
+                    }}
+                  >
+                    Reset
+                  </button>
+                </div>
+              </div>
             </div>
-            {cutSites.length === 0 ? (
-              <div className="mutations-empty">No cut sites for selected enzymes</div>
-            ) : (
-              <ul className="mutations-list">
-                {cutSites.map((cs, i) => (
-                  <li key={`${cs.enzyme}-${cs.index}-${cs.strand}-${i}`} className="mutation-item">
-                    <div className="mut-content">
-                      <span className="pill">{cs.enzyme}</span>
-                      <span className="mono">pos {cs.index}</span>
-                      <span className="mono" style={{ color: "#94a3b8" }}>{cs.strand}</span>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
+            {(() => {
+              // Deduplicate to show one row per (enzyme, position) with context like G|AATTC
+              const keyToItem = new Map();
+              const S = sequence.toUpperCase();
+              cutSites.forEach((cs) => {
+                const key = `${cs.enzyme}@${cs.index}`;
+                if (!keyToItem.has(key)) {
+                  const left = Math.max(0, cs.index - 3);
+                  const right = Math.min(S.length, cs.index + 6);
+                  const leftStr = S.slice(left, cs.index);
+                  const rightStr = S.slice(cs.index, right);
+                  keyToItem.set(key, {
+                    enzyme: cs.enzyme,
+                    index: cs.index,
+                    color: cs.color,
+                    context: `${leftStr}|${rightStr}`
+                  });
+                }
+              });
+              const list = Array.from(keyToItem.values()).sort((a,b)=> a.index-b.index || a.enzyme.localeCompare(b.enzyme));
+              if (list.length === 0) {
+                return <div className="mutations-empty">No cut sites for selected enzymes</div>;
+              }
+              return (
+                <ul className="mutations-list">
+                  {list.map((item, i) => (
+                    <li key={`${item.enzyme}-${item.index}-${i}`} className="mutation-item" style={{ borderLeft: `3px solid ${`#${(item.color>>>0).toString(16).padStart(6,"0")}`}` }}>
+                      <div className="mut-content" style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                        <span className="pill">{item.enzyme}</span>
+                        <span className="mono">Position {item.index}</span>
+                        <span className="mono" style={{ color: "#94a3b8" }}>{item.context}</span>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              );
+            })()}
           </section>
 
           {/* Virtual Digest (linear) */}
@@ -689,17 +739,29 @@ function App() {
             {fragments.length <= 1 ? (
               <div className="mutations-empty">No fragments (no cuts)</div>
             ) : (
-              <ul className="mutations-list">
-                {fragments.map((f, idx) => (
-                  <li key={`${f.start}-${f.end}-${idx}`} className="mutation-item">
-                    <div className="mut-content">
-                      <span className="pill">Fragment {idx + 1}</span>
-                      <span className="mono">[{f.start}–{f.end})</span>
-                      <span className="mono">{f.length} bp</span>
-                    </div>
-                  </li>
-                ))}
-              </ul>
+              <>
+                <div style={{ display: "flex", width: "100%", height: 20, background: "#0b1220", border: "1px solid #1f2a44", borderRadius: 6, overflow: "hidden", marginBottom: 8 }}>
+                  {(() => {
+                    const total = fragments.reduce((a,b)=>a+b.length,0) || 1;
+                    const palette = [ "#10b981", "#22c55e", "#16a34a", "#34d399", "#059669" ];
+                    return fragments.map((f, i) => {
+                      const w = (f.length / total) * 100;
+                      return <div key={`bar-${i}`} style={{ width: `${w}%`, background: palette[i % palette.length] }} />;
+                    });
+                  })()}
+                </div>
+                <ul className="mutations-list">
+                  {fragments.map((f, idx) => (
+                    <li key={`${f.start}-${f.end}-${idx}`} className="mutation-item">
+                      <div className="mut-content">
+                        <span className="pill">Fragment {idx + 1}</span>
+                        <span className="mono">[{f.start}–{f.end})</span>
+                        <span className="mono">{f.length} bp</span>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </>
             )}
           </section>
 
