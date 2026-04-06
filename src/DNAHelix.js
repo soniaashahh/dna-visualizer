@@ -2,7 +2,7 @@ import React, { useEffect, useRef } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls";
 
-const DNAHelix = ({ sequence, mutatedMarkers = [], orfSegments = [], cutSites = [], showCutAnimation = true }) => {
+const DNAHelix = ({ sequence, mutatedMarkers = [], orfSegments = [], cutSites = [], showCutAnimation = true, showOrfs = true }) => {
   const mountRef = useRef(null);
 
   useEffect(() => {
@@ -173,64 +173,83 @@ const DNAHelix = ({ sequence, mutatedMarkers = [], orfSegments = [], cutSites = 
     }
 
     // ORF highlight sleeves around helix axis
-    orfSegments.forEach((seg) => {
-      const startY = (seg.start * heightStep) - offset;
-      const endY = ((seg.end - 1) * heightStep) - offset;
-      const midY = (startY + endY) / 2;
-      const heightLen = Math.max(0.1, Math.abs(endY - startY) + heightStep);
-      const sleeveRadius = radius + 1.2;
-      const sleeveGeo = new THREE.CylinderGeometry(sleeveRadius, sleeveRadius, heightLen, 48, 1, true);
-      const sleeveMat = new THREE.MeshBasicMaterial({
-        color: seg.color || 0x22c55e,
-        transparent: true,
-        opacity: seg.selected ? 0.28 : 0.16,
-        side: THREE.DoubleSide,
+    if (showOrfs) {
+      orfSegments.forEach((seg) => {
+        const startY = (seg.start * heightStep) - offset;
+        const endY = ((seg.end - 1) * heightStep) - offset;
+        const midY = (startY + endY) / 2;
+        const heightLen = Math.max(0.1, Math.abs(endY - startY) + heightStep);
+        const sleeveRadius = radius + 1.2;
+        const sleeveGeo = new THREE.CylinderGeometry(sleeveRadius, sleeveRadius, heightLen, 48, 1, true);
+        const sleeveMat = new THREE.MeshBasicMaterial({
+          color: seg.color || 0x22c55e,
+          transparent: true,
+          opacity: seg.selected ? 0.24 : 0.12,
+          side: THREE.DoubleSide,
+          depthTest: false,
+          depthWrite: false,
+        });
+        const sleeve = new THREE.Mesh(sleeveGeo, sleeveMat);
+        sleeve.position.set(0, midY, 0);
+        sleeve.renderOrder = 5;
+        scene.add(sleeve);
       });
-      const sleeve = new THREE.Mesh(sleeveGeo, sleeveMat);
-      sleeve.position.set(0, midY, 0);
-      scene.add(sleeve);
-    });
+    }
 
     // Restriction enzyme cut-site markers (pulsing rings)
     const snipMeshes = [];
     if (Array.isArray(cutSites)) {
-      cutSites.forEach((cs) => {
+      cutSites.forEach((cs, idx) => {
         const y = (cs.index * heightStep) - offset;
-        const ringRadius = radius + 0.8;
-        const ringGeo = new THREE.TorusGeometry(ringRadius, 0.12, 12, 48);
+        // Slight radial offset per strand to prevent z-fighting when two cuts share the same index
+        const radialJitter = cs.strand === "bottom" ? 0.08 : 0.0;
+        const ringRadius = radius + 0.8 + radialJitter;
+        const ringGeo = new THREE.TorusGeometry(ringRadius, 0.14, 16, 64);
         const color = cs.color || 0xef4444;
-        const ringMat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9 });
+        const ringMat = new THREE.MeshBasicMaterial({
+          color,
+          transparent: true,
+          opacity: 0.95,
+          depthTest: false,
+          depthWrite: false,
+        });
         const ring = new THREE.Mesh(ringGeo, ringMat);
-        ring.position.set(0, y, 0);
+        ring.position.set(0, y, 0.001 + (cs.strand === "bottom" ? 0.0005 : 0));
         ring.rotation.x = Math.PI / 2;
+        ring.renderOrder = 10;
         scene.add(ring);
         snipMeshes.push(ring);
 
         // Filled disc (brighter green) to make the cut very recognizable
-        const discGeo = new THREE.CircleGeometry(ringRadius * 0.92, 48);
+        const discGeo = new THREE.CircleGeometry(ringRadius * 0.92, 64);
         const discMat = new THREE.MeshBasicMaterial({
           color: 0x22ff88, // bright mint green
           transparent: true,
-          opacity: 0.28,
+          opacity: 0.35,
           side: THREE.DoubleSide,
+          depthTest: false,
+          depthWrite: false,
         });
         const disc = new THREE.Mesh(discGeo, discMat);
-        disc.position.set(0, y, 0);
+        disc.position.set(0, y, 0.002 + (cs.strand === "bottom" ? 0.0005 : 0));
         disc.rotation.x = Math.PI / 2;
+        disc.renderOrder = 11;
         scene.add(disc);
         snipMeshes.push(disc);
 
         // Soft glow sprite (subtle halo)
         const spriteMat = new THREE.SpriteMaterial({
           color: 0x86efac,
-          opacity: 0.25,
+          opacity: 0.28,
+          depthTest: false,
           depthWrite: false,
           blending: THREE.AdditiveBlending,
         });
         const glow = new THREE.Sprite(spriteMat);
-        glow.position.set(0, y, 0);
-        const glowSize = ringRadius * 1.9;
+        glow.position.set(0, y, 0.003 + (cs.strand === "bottom" ? 0.0005 : 0));
+        const glowSize = ringRadius * 2.0;
         glow.scale.set(glowSize, glowSize, 1);
+        glow.renderOrder = 12;
         scene.add(glow);
         snipMeshes.push(glow);
       });
@@ -267,7 +286,7 @@ const DNAHelix = ({ sequence, mutatedMarkers = [], orfSegments = [], cutSites = 
       }
       controls.dispose();
     };
-  }, [sequence, JSON.stringify(cutSites), JSON.stringify(orfSegments), JSON.stringify(mutatedMarkers), showCutAnimation]);
+  }, [sequence, JSON.stringify(cutSites), JSON.stringify(orfSegments), JSON.stringify(mutatedMarkers), showCutAnimation, showOrfs]);
 
   return (
     <div

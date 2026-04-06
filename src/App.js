@@ -19,6 +19,8 @@ function App() {
   const [cutSites, setCutSites] = useState([]); // [{ enzyme, index, strand, color }]
   const [fragments, setFragments] = useState([]); // [{ start, end, length }]
   const [showCutAnimation, setShowCutAnimation] = useState(true);
+  const [showOrfs, setShowOrfs] = useState(false);
+  const [fastaMeta, setFastaMeta] = useState(null);
 
   // 🧬 BIO STATS
   const length = sequence.length;
@@ -33,6 +35,104 @@ function App() {
     G: (sequence.match(/G/g) || []).length,
     C: (sequence.match(/C/g) || []).length,
   };
+
+  // FASTA utils
+  function parseFasta(text) {
+    const lines = (text || "").replace(/\r/g, "").split("\n");
+    const entries = [];
+    let header = null;
+    let seqChunks = [];
+    for (const line of lines) {
+      if (line.startsWith(">")) {
+        if (header) {
+          entries.push({
+            id: header.split(/\s+/)[0] || "sequence",
+            desc: header.trim(),
+            seq: seqChunks.join(""),
+          });
+        }
+        header = line.slice(1).trim() || "sequence";
+        seqChunks = [];
+      } else if (line.trim()) {
+        seqChunks.push(line.trim());
+      }
+    }
+    if (header) {
+      entries.push({
+        id: header.split(/\s+/)[0] || "sequence_last",
+        desc: header.trim(),
+        seq: seqChunks.join(""),
+      });
+    }
+    return entries;
+  }
+
+  function normalizeDna(seq) {
+    if (!seq) return "";
+    // Unicode normalize and map common lookalikes from PDF exports (Greek/Cyrillic/full-width)
+    let s = seq.normalize("NFKD")
+      // Remove zero-width and control formatting chars
+      .replace(/[\u200B-\u200D\uFEFF\u00AD\u2060]/g, "");
+    // Map common homoglyphs to ASCII
+    const map = {
+      // Greek capitals
+      "Α":"A","Τ":"T","Γ":"G","Σ":"C", // Σ isn't C but sometimes used; keep conservative
+      "Π":"T", // occasionally mapped
+      // Greek lowercase
+      "α":"A","τ":"T","γ":"G","σ":"C","ς":"C",
+      // Cyrillic capitals
+      "А":"A","Т":"T","Г":"G","С":"C",
+      // Cyrillic lowercase
+      "а":"A","т":"T","г":"G","с":"C",
+      // Full-width
+      "Ａ":"A","Ｔ":"T","Ｇ":"G","Ｃ":"C",
+      "ａ":"A","ｔ":"T","ｇ":"G","ｃ":"C",
+    };
+    s = s.replace(/[\u0391\u03A4\u0393\u03A3\u03A0\u03B1\u03C4\u03B3\u03C3\u03C2\u0410\u0422\u0413\u0421\u0430\u0442\u0433\u0441\uFF21\uFF34\uFF27\uFF23\uFF41\uFF54\uFF47\uFF43]/g, (ch) => map[ch] || ch);
+    s = s.toUpperCase();
+    // Keep only ASCII A/T/G/C
+    return s.replace(/[^ATGC]/g, "");
+  }
+
+  function loadSequenceFromPlainText(text) {
+    if (!text) return "";
+    if (/^>\S/m.test(text)) {
+      const entries = parseFasta(text);
+      if (entries.length > 0) return normalizeDna(entries[0].seq);
+    }
+    return normalizeDna(text);
+  }
+
+  async function handleSequenceUpload(ev) {
+    const file = ev.target.files && ev.target.files[0];
+    if (!file) return;
+    try {
+      if (file.size > 5 * 1024 * 1024) {
+        alert("File too large (>5MB). Try a smaller FASTA.");
+        ev.target.value = "";
+        return;
+      }
+      const rawText = await file.text();
+      const cleaned = loadSequenceFromPlainText(rawText);
+      if (!cleaned) {
+        alert("No FASTA header or A/T/G/C sequence detected. Please upload a valid .fasta/.fa file.");
+        return;
+      }
+      const preview = cleaned.slice(0, 60) + (cleaned.length > 60 ? "..." : "");
+      const ok = window.confirm(`Load sequence (${cleaned.length} bp)?\n\nPreview:\n${preview}`);
+      if (!ok) return;
+      setFastaMeta({
+        id: file.name,
+        desc: file.name,
+        length: cleaned.length,
+        filename: file.name,
+      });
+      setBaseSequence(cleaned);
+      recomputeFromMutations(mutations, cleaned);
+    } finally {
+      ev.target.value = "";
+    }
+  }
 
   // Restriction enzymes (simple exact sites, linear DNA)
   const ENZYMES = React.useMemo(() => ([
@@ -266,7 +366,7 @@ function App() {
           <span className="logo">🧬</span>
           <div>
             <h1>DNA Mutation Simulator</h1>
-            <p className="subtitle">Visualize SNPs, insertions, and deletions in 3D</p>
+            <p className="subtitle">Visualize enzyme cuts, mutations, and DNA sequences in 3D</p>
           </div>
         </div>
       </header>
@@ -293,6 +393,7 @@ function App() {
               }))}
               cutSites={cutSites}
               showCutAnimation={showCutAnimation}
+              showOrfs={showOrfs}
             />
           </div>
 
@@ -411,6 +512,22 @@ function App() {
                 }}
                 placeholder="Enter A, T, G, C"
               />
+            </div>
+            <div className="field" style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8 }}>
+              <label className="btn">
+                Upload FASTA
+                <input
+                  type="file"
+                  accept=".fa,.fasta,.fna,text/fasta,text/plain"
+                  style={{ display: "none" }}
+                  onChange={handleSequenceUpload}
+                />
+              </label>
+              {fastaMeta && (
+                <span className="mono" title={fastaMeta.desc || fastaMeta.id}>
+                  {(fastaMeta.filename || fastaMeta.id)} • {fastaMeta.length} bp
+                </span>
+              )}
             </div>
 
             <div className="stats-row">
@@ -590,6 +707,15 @@ function App() {
             <div className="card-header">
               <h3>Open Reading Frames</h3>
               <div className="toggle">
+                <label style={{ display: "flex", alignItems: "center", gap: 6, marginRight: 12 }}>
+                  <input
+                    type="checkbox"
+                    checked={showOrfs}
+                    onChange={(e) => setShowOrfs(e.target.checked)}
+                    style={{ marginRight: 4 }}
+                  />
+                  Show ORFs
+                </label>
                 <label style={{ marginRight: 8 }}>Min length</label>
                 <input
                   className="input"
