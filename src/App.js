@@ -1,5 +1,7 @@
 import React, { useState } from "react";
 import DNAHelix from "./DNAHelix";
+import ProteinViewer from "./ProteinViewer";
+import { predictPdbWithEsmFold } from "./esmfoldApi";
 import "./App.css";
 
 function App() {
@@ -21,6 +23,10 @@ function App() {
   const [showCutAnimation, setShowCutAnimation] = useState(true);
   const [showOrfs, setShowOrfs] = useState(false);
   const [fastaMeta, setFastaMeta] = useState(null);
+  const [previewMode, setPreviewMode] = useState("dna"); // "dna" | "protein"
+  const [esmfoldPdbText, setEsmfoldPdbText] = useState(null);
+  const [esmfoldLoading, setEsmfoldLoading] = useState(false);
+  const [esmfoldError, setEsmfoldError] = useState(null);
 
   // 🧬 BIO STATS
   const length = sequence.length;
@@ -327,12 +333,37 @@ function App() {
     return translate(coding);
   }
 
+  /**
+   * Protein string for ESMFold: prefer selected ORF; else smallest valid ORF; else translate from first ATG to end (no stop required).
+   */
+  function getProteinSequenceForFolding(dnaSeq, orfList, selectedIdx) {
+    const S = dnaSeq.toUpperCase().replace(/[^ATGC]/g, "");
+    if (orfList.length > 0) {
+      const i = selectedIdx !== null && selectedIdx >= 0 ? selectedIdx : 0;
+      return proteinForOrf(S, orfList[i]);
+    }
+    const relaxed = findOrfs(S, { minLen: 9 });
+    if (relaxed.length) return proteinForOrf(S, relaxed[0]);
+    const atg = S.indexOf("ATG");
+    if (atg < 0) return "";
+    const len = S.length - atg;
+    const trim = len - (len % 3);
+    if (trim < 3) return "";
+    return translate(S.slice(atg, atg + trim));
+  }
+
   // Recompute ORFs whenever sequence or min length changes
   React.useEffect(() => {
     const next = findOrfs(sequence, { minLen: minOrfLength });
     setOrfs(next);
     setSelectedOrfIdx(null);
   }, [sequence, minOrfLength]);
+
+  // New DNA → drop stale ESMFold structure so the viewer matches current sequence
+  React.useEffect(() => {
+    setEsmfoldPdbText(null);
+    setEsmfoldError(null);
+  }, [sequence]);
 
   const toggleSelected = (id) => {
     setSelectedMutationIds((prev) => {
@@ -359,11 +390,39 @@ function App() {
     });
   };
 
+  async function handleEsmfoldPredict() {
+    setEsmfoldError(null);
+    const prot = getProteinSequenceForFolding(sequence, orfs, selectedOrfIdx);
+    if (!prot || prot.length < 4) {
+      setEsmfoldError(
+        "Could not get a protein sequence: include an ATG start and at least ~4 amino acids (or enable ORFs and pick one)."
+      );
+      return;
+    }
+    if (process.env.NODE_ENV === "development") {
+      // eslint-disable-next-line no-console
+      console.info("[ESMFold] aa length:", prot.length, "preview:", prot.slice(0, 40) + (prot.length > 40 ? "…" : ""));
+    }
+    setEsmfoldLoading(true);
+    try {
+      const pdb = await predictPdbWithEsmFold(prot);
+      if (process.env.NODE_ENV === "development") {
+        // eslint-disable-next-line no-console
+        console.info("[ESMFold] PDB chars:", pdb.length);
+      }
+      setEsmfoldPdbText(pdb);
+    } catch (e) {
+      setEsmfoldPdbText(null);
+      setEsmfoldError(e.message || String(e));
+    } finally {
+      setEsmfoldLoading(false);
+    }
+  }
+
   return (
     <div className="app-root">
       <header className="app-header">
-        <div className="app-title">
-          <span className="logo">🧬</span>
+        <div className="app-title">          <span className="logo"></span>
           <div>
             <h1>DNA Mutation Simulator</h1>
             <p className="subtitle">Visualize enzyme cuts, mutations, and DNA sequences in 3D</p>
@@ -375,26 +434,102 @@ function App() {
         <section className="card preview-card">
           <div className="card-header">
             <h2>3D Preview</h2>
-            <div className="badges">
-              <span className="badge">Length: {length}</span>
-              <span className="badge">GC: {gcContent}%</span>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <div className="badges">
+                <span className="badge">Length: {length}</span>
+                <span className="badge">GC: {gcContent}%</span>
+              </div>
+              <div style={{ display: "flex", gap: 6 }}>
+                <button
+                  type="button"
+                  className={`btn small ${previewMode === "dna" ? "primary" : ""}`}
+                  onClick={() => setPreviewMode("dna")}
+                >
+                  DNA helix
+                </button>
+                <button
+                  type="button"
+                  className={`btn small ${previewMode === "protein" ? "primary" : ""}`}
+                  onClick={() => setPreviewMode("protein")}
+                >
+                  Protein 3D
+                </button>
+              </div>
             </div>
           </div>
+          {previewMode === "protein" && (
+            <div
+              className="protein-toolbar"
+              style={{
+                padding: "0 0 12px",
+                display: "flex",
+                flexWrap: "wrap",
+                gap: 8,
+                alignItems: "center",
+                fontSize: 13,
+                color: "#94a3b8",
+              }}
+            >
+              <span style={{ marginRight: 4 }}>
+                Structure:{" "}
+                <strong style={{ color: esmfoldPdbText ? "#86efac" : "#cbd5e1" }}>
+                  {esmfoldPdbText ? "Predicted (ESMFold)" : "1A3N reference (PDB file)"}
+                </strong>
+              </span>
+              <button
+                type="button"
+                className="btn small"
+                disabled={esmfoldLoading}
+                onClick={() => {
+                  setEsmfoldPdbText(null);
+                  setEsmfoldError(null);
+                }}
+              >
+                Show 1A3N file
+              </button>
+              <button
+                type="button"
+                className="btn small primary"
+                disabled={esmfoldLoading}
+                onClick={handleEsmfoldPredict}
+              >
+                {esmfoldLoading ? "Running ESMFold…" : "Predict from DNA (ESMFold)"}
+              </button>
+              {esmfoldError && (
+                <span style={{ color: "#f87171", fontSize: 12, maxWidth: 420 }}>
+                  {esmfoldError}
+                </span>
+              )}
+              {esmfoldPdbText && !esmfoldError && (
+                <span style={{ color: "#86efac", fontSize: 12 }}>
+                  Using API output — change DNA above and predict again to update.
+                </span>
+              )}
+            </div>
+          )}
           <div className="preview-canvas">
-            <DNAHelix
-              sequence={sequence}
-              mutatedMarkers={mutatedMarkers}
-              orfSegments={orfs.map((o, idx) => ({
-                start: o.start,
-                end: o.end,
-                frame: o.frame,
-                color: o.frame === 0 ? 0x22c55e : o.frame === 1 ? 0x3b82f6 : 0xf59e0b,
-                selected: idx === selectedOrfIdx,
-              }))}
-              cutSites={cutSites}
-              showCutAnimation={showCutAnimation}
-              showOrfs={showOrfs}
-            />
+            {previewMode === "protein" ? (
+              <ProteinViewer
+                key={esmfoldPdbText ? `pred-${esmfoldPdbText.length}` : "file-1a3n"}
+                pdbPath={esmfoldPdbText ? undefined : "/proteins/1A3N.pdb"}
+                pdbText={esmfoldPdbText}
+              />
+            ) : (
+              <DNAHelix
+                sequence={sequence}
+                mutatedMarkers={mutatedMarkers}
+                orfSegments={orfs.map((o, idx) => ({
+                  start: o.start,
+                  end: o.end,
+                  frame: o.frame,
+                  color: o.frame === 0 ? 0x22c55e : o.frame === 1 ? 0x3b82f6 : 0xf59e0b,
+                  selected: idx === selectedOrfIdx,
+                }))}
+                cutSites={cutSites}
+                showCutAnimation={showCutAnimation}
+                showOrfs={showOrfs}
+              />
+            )}
           </div>
 
           <div className="sequence-preview">

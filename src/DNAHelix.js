@@ -1,9 +1,13 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls";
 
+/** Beyond this, full per-base meshes freeze the browser — subsample for preview. */
+const MAX_VISUAL_BASES = 220;
+
 const DNAHelix = ({ sequence, mutatedMarkers = [], orfSegments = [], cutSites = [], showCutAnimation = true, showOrfs = true }) => {
   const mountRef = useRef(null);
+  const [helixHint, setHelixHint] = useState(null);
 
   useEffect(() => {
     const scene = new THREE.Scene();
@@ -16,7 +20,7 @@ const DNAHelix = ({ sequence, mutatedMarkers = [], orfSegments = [], cutSites = 
       75,
       width / height,
       0.1,
-      1000
+      8000
     );
 
     const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -24,6 +28,12 @@ const DNAHelix = ({ sequence, mutatedMarkers = [], orfSegments = [], cutSites = 
 
     const mount = mountRef.current;
     if (!mount) return;
+
+    const length = sequence.length;
+    if (length < 1) {
+      setHelixHint(null);
+      return;
+    }
 
     mount.appendChild(renderer.domElement);
 
@@ -33,11 +43,24 @@ const DNAHelix = ({ sequence, mutatedMarkers = [], orfSegments = [], cutSites = 
     controls.dampingFactor = 0.08;
     controls.enablePan = true;
     controls.minDistance = 20;
-    controls.maxDistance = 180;
+    controls.maxDistance = Math.max(220, 80 + length * 0.35);
     controls.target.set(0, 0, 0);
     controls.update();
 
-    const length = sequence.length;
+    const visualStep =
+      length <= MAX_VISUAL_BASES ? 1 : Math.ceil(length / MAX_VISUAL_BASES);
+    const visualIndices = [];
+    for (let i = 0; i < length; i += visualStep) {
+      visualIndices.push(i);
+    }
+    if (visualIndices[visualIndices.length - 1] !== length - 1) {
+      visualIndices.push(length - 1);
+    }
+    setHelixHint(
+      visualStep > 1
+        ? `Long sequence (${length} bp): preview shows every ${visualStep} bases (performance).`
+        : null
+    );
 
     // 🔥 SMART SCALING (fills screen first, shrinks only when needed)
     let heightStep;
@@ -121,7 +144,8 @@ const DNAHelix = ({ sequence, mutatedMarkers = [], orfSegments = [], cutSites = 
     const strand1Points = [];
     const strand2Points = [];
 
-    sequence.split("").forEach((base, i) => {
+    visualIndices.forEach((i) => {
+      const base = sequence[i];
       const angle = i * angleStep;
 
       // Strand 1 (original)
@@ -256,8 +280,9 @@ const DNAHelix = ({ sequence, mutatedMarkers = [], orfSegments = [], cutSites = 
     }
 
     // 🔁 ANIMATION
+    let raf = 0;
     const animate = () => {
-      requestAnimationFrame(animate);
+      raf = requestAnimationFrame(animate);
       controls.update();
       scene.rotation.y += 0.01;
       // Pulse cut-site markers
@@ -281,22 +306,44 @@ const DNAHelix = ({ sequence, mutatedMarkers = [], orfSegments = [], cutSites = 
 
     // 🧹 CLEANUP
     return () => {
+      cancelAnimationFrame(raf);
+      controls.dispose();
+      renderer.dispose();
+      if (typeof renderer.forceContextLoss === "function") {
+        renderer.forceContextLoss();
+      }
       if (mount && renderer.domElement.parentNode === mount) {
         mount.removeChild(renderer.domElement);
       }
-      controls.dispose();
     };
   }, [sequence, JSON.stringify(cutSites), JSON.stringify(orfSegments), JSON.stringify(mutatedMarkers), showCutAnimation, showOrfs]);
 
   return (
-    <div
-      ref={mountRef}
-      style={{
-        marginTop: "20px",
-        display: "flex",
-        justifyContent: "center",
-      }}
-    />
+    <div style={{ marginTop: "20px", display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+      {helixHint && (
+        <div
+          style={{
+            maxWidth: 720,
+            padding: "8px 12px",
+            fontSize: 12,
+            color: "#94a3b8",
+            background: "#0f172a",
+            border: "1px solid #1f2a44",
+            borderRadius: 8,
+            textAlign: "center",
+          }}
+        >
+          {helixHint}
+        </div>
+      )}
+      <div
+        ref={mountRef}
+        style={{
+          display: "flex",
+          justifyContent: "center",
+        }}
+      />
+    </div>
   );
 };
 
