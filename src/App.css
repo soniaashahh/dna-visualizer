@@ -102,6 +102,71 @@ body {
 .protein-toolbar code {
   word-break: break-all;
 }
+.protein-pdb-picker {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.protein-color-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #94a3b8;
+  font-size: 12px;
+}
+.protein-mode-select {
+  min-width: 220px;
+  padding: 8px 10px;
+  font-size: 12px;
+}
+.protein-pdb-picker .input {
+  width: 150px;
+  padding: 8px 10px;
+  font-size: 12px;
+}
+.protein-summary {
+  margin-top: 12px;
+  border: 1px solid #1f2a44;
+  background: #0d1729;
+  border-radius: 12px;
+  padding: 12px;
+}
+.protein-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+}
+.protein-summary-item {
+  display: grid;
+  gap: 4px;
+  border: 1px solid #1e2b45;
+  border-radius: 8px;
+  background: #0a1323;
+  padding: 8px;
+  min-width: 0;
+}
+.protein-summary-item span {
+  color: #94a3b8;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.protein-summary-item strong {
+  color: #e2e8f0;
+  font-size: 12px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.protein-summary-wide {
+  grid-column: 1 / -1;
+}
+.protein-summary-empty {
+  margin: 0;
+  color: #94a3b8;
+  font-size: 12px;
+}
 .card h2, .card h3 {
   margin: 0;
   color: var(--heading);

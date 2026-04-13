@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import DNAHelix from "./DNAHelix";
 import ProteinViewer from "./ProteinViewer";
 import { predictPdbWithEsmFold } from "./esmfoldApi";
+import { parsePdbSummary } from "./pdbParser";
 import "./App.css";
 
 function App() {
@@ -27,6 +28,19 @@ function App() {
   const [esmfoldPdbText, setEsmfoldPdbText] = useState(null);
   const [esmfoldLoading, setEsmfoldLoading] = useState(false);
   const [esmfoldError, setEsmfoldError] = useState(null);
+  const [manualPdbText, setManualPdbText] = useState(null);
+  const [manualPdbLabel, setManualPdbLabel] = useState("1A3N reference (PDB file)");
+  const [pdbLoadError, setPdbLoadError] = useState(null);
+  const [pdbLoading, setPdbLoading] = useState(false);
+  const [pdbIdInput, setPdbIdInput] = useState("1CRN");
+  const [proteinColorMode, setProteinColorMode] = useState("sequence");
+
+  const activeProteinPdbText = esmfoldPdbText || manualPdbText;
+  const activeProteinLabel = esmfoldPdbText ? "Predicted (ESMFold)" : manualPdbLabel;
+  const activePdbSummary = React.useMemo(
+    () => parsePdbSummary(activeProteinPdbText),
+    [activeProteinPdbText]
+  );
 
   // 🧬 BIO STATS
   const length = sequence.length;
@@ -365,6 +379,28 @@ function App() {
     setEsmfoldError(null);
   }, [sequence]);
 
+  // Preload the default reference so parsed summary is available immediately in protein mode.
+  React.useEffect(() => {
+    let cancelled = false;
+    fetch("/proteins/1A3N.pdb")
+      .then((resp) => {
+        if (!resp.ok) throw new Error(`PDB fetch ${resp.status}`);
+        return resp.text();
+      })
+      .then((text) => {
+        if (!cancelled && text && text.trim()) {
+          setManualPdbText(text);
+          setManualPdbLabel("1A3N reference (PDB file)");
+        }
+      })
+      .catch(() => {
+        /* ignore preload failures; viewer still falls back to pdbPath */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const toggleSelected = (id) => {
     setSelectedMutationIds((prev) => {
       const next = new Set(prev);
@@ -392,6 +428,7 @@ function App() {
 
   async function handleEsmfoldPredict() {
     setEsmfoldError(null);
+    setPdbLoadError(null);
     const prot = getProteinSequenceForFolding(sequence, orfs, selectedOrfIdx);
     if (!prot || prot.length < 4) {
       setEsmfoldError(
@@ -418,6 +455,72 @@ function App() {
       setEsmfoldLoading(false);
     }
   }
+
+  async function loadManualPdbFromUrl(url, label, invalidMessage = null) {
+    setPdbLoading(true);
+    setPdbLoadError(null);
+    setEsmfoldError(null);
+    try {
+      const resp = await fetch(url);
+      const text = await resp.text();
+      if (!resp.ok) {
+        throw new Error(invalidMessage || `Could not load ${label}: ${resp.status}`);
+      }
+      if (!text || !text.trim()) {
+        throw new Error(`Loaded ${label}, but it was empty.`);
+      }
+      setEsmfoldPdbText(null);
+      setManualPdbText(text);
+      setManualPdbLabel(label);
+    } catch (e) {
+      setPdbLoadError(invalidMessage || e.message || String(e));
+    } finally {
+      setPdbLoading(false);
+    }
+  }
+
+  function handleShowReference() {
+    loadManualPdbFromUrl("/proteins/1A3N.pdb", "1A3N reference (PDB file)");
+  }
+
+  function handlePdbIdLoad() {
+    const id = (pdbIdInput || "").trim().toUpperCase();
+    if (!/^[A-Z0-9]{4}$/.test(id)) {
+      setPdbLoadError("Try again, not valid.");
+      return;
+    }
+    loadManualPdbFromUrl(
+      `https://files.rcsb.org/download/${id}.pdb`,
+      `${id} (RCSB PDB)`,
+      "Try again, not valid."
+    );
+  }
+
+  async function handlePdbUpload(ev) {
+    const file = ev.target.files && ev.target.files[0];
+    if (!file) return;
+    try {
+      setPdbLoadError(null);
+      setEsmfoldError(null);
+      const text = await file.text();
+      if (!text || !text.trim()) {
+        throw new Error("Uploaded file was empty.");
+      }
+      setEsmfoldPdbText(null);
+      setManualPdbText(text);
+      setManualPdbLabel(`${file.name} (uploaded)`);
+    } catch (e) {
+      setPdbLoadError(e.message || String(e));
+    } finally {
+      ev.target.value = "";
+    }
+  }
+
+  const boundsText = React.useMemo(() => {
+    if (!activePdbSummary.bounds) return "N/A";
+    const { min, max } = activePdbSummary.bounds;
+    return `x ${min.x.toFixed(1)}..${max.x.toFixed(1)}, y ${min.y.toFixed(1)}..${max.y.toFixed(1)}, z ${min.z.toFixed(1)}..${max.z.toFixed(1)}`;
+  }, [activePdbSummary.bounds]);
 
   return (
     <div className="app-root">
@@ -473,31 +576,71 @@ function App() {
               <span style={{ marginRight: 4 }}>
                 Structure:{" "}
                 <strong style={{ color: esmfoldPdbText ? "#86efac" : "#cbd5e1" }}>
-                  {esmfoldPdbText ? "Predicted (ESMFold)" : "1A3N reference (PDB file)"}
+                  {activeProteinLabel}
                 </strong>
               </span>
               <button
                 type="button"
                 className="btn small"
-                disabled={esmfoldLoading}
-                onClick={() => {
-                  setEsmfoldPdbText(null);
-                  setEsmfoldError(null);
-                }}
+                disabled={esmfoldLoading || pdbLoading}
+                onClick={handleShowReference}
               >
                 Show 1A3N file
               </button>
               <button
                 type="button"
                 className="btn small primary"
-                disabled={esmfoldLoading}
+                disabled={esmfoldLoading || pdbLoading}
                 onClick={handleEsmfoldPredict}
               >
                 {esmfoldLoading ? "Running ESMFold…" : "Predict from DNA (ESMFold)"}
               </button>
+              <label className="protein-color-control">
+                Color mode
+                <select
+                  className="input protein-mode-select"
+                  value={proteinColorMode}
+                  onChange={(e) => setProteinColorMode(e.target.value)}
+                >
+                  <option value="sequence">Sequence (spectrum)</option>
+                  <option value="chain">By chain</option>
+                  <option value="confidence">Confidence (B-factor / pLDDT)</option>
+                </select>
+              </label>
+              <div className="protein-pdb-picker">
+                <input
+                  className="input"
+                  value={pdbIdInput}
+                  onChange={(e) => setPdbIdInput(e.target.value.toUpperCase())}
+                  maxLength={4}
+                  placeholder="Enter PDB ID (e.g. 1CRN)"
+                />
+                <button
+                  type="button"
+                  className="btn small"
+                  disabled={esmfoldLoading || pdbLoading}
+                  onClick={handlePdbIdLoad}
+                >
+                  {pdbLoading ? "Loading PDB…" : "Load & View PDB"}
+                </button>
+                <label className="btn small">
+                  Upload .pdb
+                  <input
+                    type="file"
+                    accept=".pdb,.ent,.txt,text/plain"
+                    style={{ display: "none" }}
+                    onChange={handlePdbUpload}
+                  />
+                </label>
+              </div>
               {esmfoldError && (
                 <span style={{ color: "#f87171", fontSize: 12, maxWidth: 420 }}>
                   {esmfoldError}
+                </span>
+              )}
+              {pdbLoadError && (
+                <span style={{ color: "#f87171", fontSize: 12, maxWidth: 420 }}>
+                  {pdbLoadError}
                 </span>
               )}
               {esmfoldPdbText && !esmfoldError && (
@@ -510,9 +653,10 @@ function App() {
           <div className="preview-canvas">
             {previewMode === "protein" ? (
               <ProteinViewer
-                key={esmfoldPdbText ? `pred-${esmfoldPdbText.length}` : "file-1a3n"}
-                pdbPath={esmfoldPdbText ? undefined : "/proteins/1A3N.pdb"}
-                pdbText={esmfoldPdbText}
+                key={activeProteinPdbText ? `pdb-${activeProteinPdbText.length}` : "file-1a3n"}
+                pdbPath={activeProteinPdbText ? undefined : "/proteins/1A3N.pdb"}
+                pdbText={activeProteinPdbText}
+                colorMode={proteinColorMode}
               />
             ) : (
               <DNAHelix
@@ -531,6 +675,29 @@ function App() {
               />
             )}
           </div>
+          {previewMode === "protein" && (
+            <div className="protein-summary">
+              <div className="compare-title current">Parsed structure summary</div>
+              {activePdbSummary.valid ? (
+                <div className="protein-summary-grid">
+                  <div className="protein-summary-item"><span>PDB ID</span><strong>{activePdbSummary.pdbId || "N/A"}</strong></div>
+                  <div className="protein-summary-item"><span>Chains</span><strong>{activePdbSummary.chainCount}</strong></div>
+                  <div className="protein-summary-item"><span>Residues</span><strong>{activePdbSummary.residueCount}</strong></div>
+                  <div className="protein-summary-item"><span>Atoms</span><strong>{activePdbSummary.atomCount}</strong></div>
+                  <div className="protein-summary-item"><span>HETATM</span><strong>{activePdbSummary.heteroAtomCount}</strong></div>
+                  <div className="protein-summary-item"><span>Models</span><strong>{activePdbSummary.modelCount}</strong></div>
+                  <div className="protein-summary-item protein-summary-wide"><span>Method</span><strong>{activePdbSummary.method || "N/A"}</strong></div>
+                  <div className="protein-summary-item protein-summary-wide"><span>Bounds</span><strong>{boundsText}</strong></div>
+                  <div className="protein-summary-item protein-summary-wide"><span>Chains detail</span><strong>{activePdbSummary.chains.map((c) => `${c.id}:${c.residueCount}`).join(" · ") || "N/A"}</strong></div>
+                  <div className="protein-summary-item protein-summary-wide"><span>Title</span><strong>{activePdbSummary.title || activeProteinLabel}</strong></div>
+                </div>
+              ) : (
+                <p className="protein-summary-empty">
+                  Load a PDB ID, upload a PDB file, or run ESMFold to parse and show structural stats.
+                </p>
+              )}
+            </div>
+          )}
 
           <div className="sequence-preview">
             <label>

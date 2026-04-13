@@ -4,6 +4,20 @@ const D3MOL_CDN = "https://cdnjs.cloudflare.com/ajax/libs/3Dmol/2.0.4/3Dmol-min.
 const VIEWER_BG = "#1e293b";
 const H = 520;
 
+function confidenceColorFromBFactor(b) {
+  if (!Number.isFinite(b)) return "#94a3b8";
+  if (b >= 90) return "#2563eb"; // very high confidence
+  if (b >= 70) return "#22c55e"; // confident
+  if (b >= 50) return "#f59e0b"; // low confidence
+  return "#ef4444"; // very low confidence
+}
+
+function colorLegendText(mode) {
+  if (mode === "chain") return "Ribbon: by chain";
+  if (mode === "confidence") return "Ribbon: confidence (B-factor / pLDDT-like)";
+  return "Ribbon: spectrum (rainbow along sequence)";
+}
+
 function load3DmolOnce() {
   if (typeof window === "undefined") return Promise.reject(new Error("no window"));
   if (window.$3Dmol) return Promise.resolve();
@@ -27,14 +41,25 @@ function load3DmolOnce() {
   return window.__d3molPromise;
 }
 
-function ProteinViewer({ pdbPath = "/proteins/1A3N.pdb", pdbText = null }) {
+function ProteinViewer({ pdbPath = "/proteins/1A3N.pdb", pdbText = null, colorMode = "sequence" }) {
   const wrapperRef = useRef(null);
   const mountRef = useRef(null);
   const viewerRef = useRef(null);
 
   const applyStyles = useCallback((viewer) => {
+    let cartoonStyle = { color: "spectrum", style: "oval", thickness: 0.72, arrows: true, opacity: 1 };
+    if (colorMode === "chain") {
+      cartoonStyle = { ...cartoonStyle, colorscheme: "chain" };
+      delete cartoonStyle.color;
+    } else if (colorMode === "confidence") {
+      cartoonStyle = {
+        ...cartoonStyle,
+        colorfunc: (atom) => confidenceColorFromBFactor(Number(atom?.b)),
+      };
+      delete cartoonStyle.color;
+    }
     viewer.setStyle({ hetflag: false }, {
-      cartoon: { color: "spectrum", style: "oval", thickness: 0.72, arrows: true, opacity: 1 },
+      cartoon: cartoonStyle,
     });
     viewer.setStyle({ hetflag: true }, {
       stick: { radius: 0.22, colorscheme: "Jmol" },
@@ -46,7 +71,7 @@ function ProteinViewer({ pdbPath = "/proteins/1A3N.pdb", pdbText = null }) {
     requestAnimationFrame(() => {
       try { viewer.zoom(0.88, 400); viewer.render(); } catch { /* ignore */ }
     });
-  }, []);
+  }, [colorMode]);
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -139,7 +164,7 @@ function ProteinViewer({ pdbPath = "/proteins/1A3N.pdb", pdbText = null }) {
         color: "#64748b", fontSize: 11, pointerEvents: "none",
         display: "flex", gap: 14,
       }}>
-        <span>Ribbon: spectrum (rainbow along sequence)</span>
+        <span>{colorLegendText(colorMode)}</span>
         <span>Drag rotate · Scroll zoom · Right-drag pan</span>
       </div>
     </div>
